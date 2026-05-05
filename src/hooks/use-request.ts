@@ -1,7 +1,34 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 
-import { httpClient } from "@/libs/httpClient";
-import { apiRoutes } from "@/services/api/apiRoutes";
+import { httpClient } from "../libs/httpClient";
+import { apiRoutes, type HttpMethod } from "../services/api/api-routes";
+
+type ExtractFormSchemaType<
+  R extends keyof typeof apiRoutes,
+  M extends keyof (typeof apiRoutes)[R]["methods"],
+> = (typeof apiRoutes)[R]["methods"][M] extends {
+  formSchema: infer S;
+}
+  ? S
+  : undefined;
+
+type ExtractResponseType<
+  R extends keyof typeof apiRoutes,
+  M extends keyof (typeof apiRoutes)[R]["methods"],
+> = (typeof apiRoutes)[R]["methods"][M] extends {
+  responseSchema: { parse: (data: any) => infer T };
+}
+  ? T
+  : unknown;
+
+type ExtractPayloadType<
+  R extends keyof typeof apiRoutes,
+  M extends keyof (typeof apiRoutes)[R]["methods"],
+> = (typeof apiRoutes)[R]["methods"][M] extends {
+  formSchema: { parse: (data: any) => infer T };
+}
+  ? T
+  : Record<string, unknown>;
 
 type ExtractRouteParams<T extends string> = string extends T
   ? Record<string, string>
@@ -15,13 +42,6 @@ type RouteParamsProp<R extends string> =
   ExtractRouteParams<R> extends never
     ? { params?: never }
     : { params: ExtractRouteParams<R> };
-
-interface MethodConfig {
-  responseSchema?: { parse: (data: unknown) => unknown };
-  formSchema?: { parse: (data: unknown) => unknown };
-}
-
-type HttpMethod = keyof (typeof apiRoutes)[keyof typeof apiRoutes]["methods"];
 
 type UseRequestProps<
   R extends keyof typeof apiRoutes,
@@ -54,10 +74,8 @@ export function useRequest<
 >(props: UseRequestProps<R, M>) {
   const { route, method, autoFetch = false, queryKey, params } = props as any;
 
-  const routeConfig = apiRoutes[route as keyof typeof apiRoutes] as {
-    methods: Record<string, MethodConfig>;
-  };
-  const methodConfig = routeConfig.methods[method]; // method is 'any', but routeConfig is safely typed
+  const routeConfig = apiRoutes[route as keyof typeof apiRoutes] as any;
+  const methodConfig = routeConfig.methods[method];
   const httpMethod = method as HttpMethod;
 
   const parsedRoute = params
@@ -80,13 +98,16 @@ export function useRequest<
       const response = await callHttpMethod(httpMethod, parsedRoute);
       return response?.data;
     },
-    select: (data: unknown) =>
-      methodConfig?.responseSchema?.parse(data) ?? data,
+
+    select: (data: unknown) => {
+      const parsedData = methodConfig?.responseSchema?.parse(data) ?? data;
+      return parsedData as ExtractResponseType<R, M>;
+    },
     enabled: autoFetch,
   });
 
   const { mutate, isPending } = useMutation({
-    mutationFn: async (payload: Record<string, unknown>) => {
+    mutationFn: async (payload: ExtractPayloadType<R, M>) => {
       const response = await callHttpMethod(httpMethod, parsedRoute, payload);
       return response?.data;
     },
@@ -97,6 +118,6 @@ export function useRequest<
     isLoading: isLoading || isPending,
     refetch,
     mutate,
-    formSchema: methodConfig?.formSchema,
+    formSchema: methodConfig?.formSchema as ExtractFormSchemaType<R, M>,
   };
 }
